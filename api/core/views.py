@@ -1,8 +1,15 @@
+import hashlib
+import os
+
+from django.conf import settings
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ViewSet
+import urllib.parse
+import re
+import base64
 
 from .models import User, Task
 from .serializers import UserSerializer, TaskSerializer
@@ -114,3 +121,46 @@ class TaskViewSet(ViewSet):
                 return Response({**user_data, "message": "Invalid Token"})
         except Exception as e:
             return Response({"success": False, "message": e.__str__(), "data": None})
+
+
+class SSOLoginViewSet(ViewSet):
+    permission_classes = [AllowAny]
+
+    def _generate_code_challenge(self, method):
+        os_generated_rand_str = os.urandom(40)
+        code_verifier = base64.urlsafe_b64encode(os_generated_rand_str).decode('utf8')
+        sanitized_code_verifier = re.sub('[^a-zA-Z0-9]+', '', code_verifier)
+        if method == 'plain':
+            return sanitized_code_verifier, sanitized_code_verifier
+        # Base64 encoded string of sha256 string of code_verifier
+        pkce_challenge_code = hashlib.sha256(sanitized_code_verifier.encode('utf8')).digest()
+        challenge_code = base64.urlsafe_b64encode(pkce_challenge_code).decode('utf8')
+        challenge_code = challenge_code.replace("=", "")
+        return challenge_code, sanitized_code_verifier
+
+    def generate_authorize_endpoint(self, request):
+        try:
+            body = request.data
+            tenant_id = body.get('tenant_id')
+            client_id = settings.CLIENT_ID
+            code_challenge_method = body.get('challenge_code_method')
+            if not body:
+                return Response({"message": "Please send request body", "success": False}, status=400)
+            url = f"{settings.IDM_BASE_URI}authorize"
+            code_challenge, code_verifier = self._generate_code_challenge(code_challenge_method)
+            params = {
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": f"{settings.REDIRECT_URL}/?tenant_id={tenant_id}",
+                "scope": "openid profile email",
+                "code_challenge": code_challenge,
+                "code_challenge_method": code_challenge_method
+            }
+            response_data = {
+                "url": url + urllib.parse.urlencode(params),
+                "code_verifier": code_verifier,
+                "tenant_id": tenant_id
+            }
+            return Response({"success": True, "data": response_data}, status=200)
+        except Exception as e:
+            return Response({"success": False, "data": str(e)}, status=500)
