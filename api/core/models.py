@@ -1,12 +1,13 @@
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+from django.contrib.auth.hashers import make_password
 
 
 # Create your models here.
 class UserManager(BaseUserManager):
 
-    def create_user(self, email, password):
+    def create_user(self, email, password, **kwargs):
         """
         Creates Normal User
         """
@@ -16,15 +17,15 @@ class UserManager(BaseUserManager):
         if not password:
             raise ValueError('Users must have a password')
 
-        user = self.model(email=self.normalize_email(email))
-
-        user.set_password(password)
+        user = self.create(email, password=make_password(password), **kwargs)
+        user.username = email
+        # user.set_password(make_password(password))
         user.sso_id = False
         user.sso_id = None
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, email, password):
+    def create_superuser(self, email, password, **kwargs):
         """
         Creates a super user
         """
@@ -34,15 +35,16 @@ class UserManager(BaseUserManager):
         if not password:
             raise ValueError('Users must have a password')
 
-        user = self.model(email=self.normalize_email(email))
+        user = self.create(email=email, password=make_password(password), **kwargs)
         user.is_superuser = True
         user.sso_id = False
         user.sso_id = None
-        user.set_password(password)
+        user.username = email
+        # user.set_password(make_password(password))
         user.save(using=self._db)
         return user
 
-    def create_staffuser(self, email, password):
+    def create_staffuser(self, email, password, **kwargs):
         """
         Creates a staff user
         """
@@ -52,12 +54,12 @@ class UserManager(BaseUserManager):
         if not password:
             raise ValueError('Users must have a password')
 
-        user = self.model(email=self.normalize_email(email))
+        user = self.create(email=email, password=make_password(password), **kwargs)
         user.is_staff = True
-        user.set_password(password)
-        user.save(using=self._db)
+        user.username = email
         user.sso_id = False
         user.sso_id = None
+        user.save(using=self._db)
         return user
 
 
@@ -76,8 +78,3 @@ class Task(models.Model):
 
     def __str__(self):
         return self.name
-
-
-
-
-

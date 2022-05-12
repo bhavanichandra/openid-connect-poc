@@ -2,6 +2,7 @@ import hashlib
 import os
 
 from django.conf import settings
+from django.contrib.auth.hashers import make_password, check_password
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -10,6 +11,7 @@ from rest_framework.viewsets import ViewSet
 import urllib.parse
 import re
 import base64
+import jwt
 
 from .models import User, Task
 from .serializers import UserSerializer, TaskSerializer
@@ -22,10 +24,7 @@ class LoginUserViewSet(ViewSet):
     """
     permission_classes = [AllowAny]
 
-    def get_query_set(self):
-        return User.objects.all()
-
-    @action(methods=['post'], description="Login user", detail=False, url_path="login", url_name="login")
+    @action(methods=['post'], description="Login user", detail=False)
     def login(self, request):
         """
         Login User
@@ -35,7 +34,9 @@ class LoginUserViewSet(ViewSet):
         if email is None or password is None:
             return Response({"success": False, "message": "Please provide both email and password", "data": None})
         try:
-            user = User.objects.get(username=email, password=password)
+            user = User.objects.get(username=email)
+            if not check_password(password, user.password):
+                return Response({"success": False, "message": "Invalid username or password"}, status=401)
             try:
                 token = Token.objects.get(user=user)
                 token.delete()
@@ -43,25 +44,42 @@ class LoginUserViewSet(ViewSet):
                 pass
 
             token = Token.objects.create(user=user)
-            return Response({"success": True, "message": "User logged in", "data": {'token': token.key}})
+            user_data = {
+                "id": user.id,
+                "name": user.get_full_name(),
+                "username": user.username,
+                "isSSOUser": user.is_sso,
+                "SSOId": user.sso_id
+            }
+            return Response(
+                {"success": True, "message": "User logged in", "data": {'token': token.key, "user": user_data}})
         except User.DoesNotExist:
             return Response({"success": False, "message": "User does not exist", "data": None})
 
-    @action(methods=['post'], detail=False, description="Registers new user", url_path="register", url_name="register")
+    @action(methods=['post'], detail=False, description="Registers new user")
     def register(self, request):
         """
         Register New User
         """
+        if not request.data:
+            return Response(
+                {"success": False, "message": "Please provide email, password and username, firstname and lastname",
+                 "data": None})
         email = request.data.get('email')
         password = request.data.get('password')
         username = request.data.get('username')
-        if email is None or password is None or username is None:
-            return Response({"success": False, "message": "Please provide  email, password and username", "data": None})
+        first_name = request.data.get('firstName')
+        last_name = request.data.get('lastName')
+        is_sso_user = request.data.get('sso') or False
+
         try:
             User.objects.get(username=email)
             return Response({"success": False, "message": "User already exists", "data": None})
         except User.DoesNotExist:
-            user = User.objects.create(username=username, email=email, password=password)
+            user = User.objects.create(username=username, email=email, password=make_password(password),
+                                       first_name=first_name,
+                                       last_name=last_name,
+                                       is_sso=is_sso_user)
             user.save()
             return Response({"success": True, "message": "User registered", "data": UserSerializer(user).data})
 
@@ -94,13 +112,28 @@ class TaskViewSet(ViewSet):
         token = request.auth.key
         user_data = validate_token_and_get_user(token)
         if user_data.get("success"):
-            tasks = Task.objects.all()
+            user_id = user_data.get('data').get('user_id')
+            tasks = Task.objects.filter(user_id=user_id)
             task_serializer = TaskSerializer(tasks, many=True)
             return Response({"success": True, "message": "Tasks fetched!", "data": list(task_serializer.data)})
         else:
             return Response({**user_data, "message": "Invalid Token"})
 
-    def update(self, request, pk=None):
+    def delete(self, request, pk):
+        try:
+            token = request.auth.key
+            user_data = validate_token_and_get_user(token)
+            if not user_data.get('success'):
+                return Response({"message": "Invalid Token", "success": False}, status=401)
+            task = Task.objects.get(pk=pk)
+            task.delete()
+            return Response({"message": f"Successfully delete task {pk}", "success": True}, status=200)
+        except Task.DoesNotExist:
+            return Response({"message": f"Task with id: {pk} doesn't exists", "success": False}, status=404)
+        except Exception as ex:
+            return Response({"message": f"Unexpected error: {str(ex)}", "success": False}, status=500)
+
+    def update(self, request, pk):
         try:
             token = request.auth.key
             user_data = validate_token_and_get_user(token)
@@ -125,6 +158,29 @@ class TaskViewSet(ViewSet):
 
 class SSOLoginViewSet(ViewSet):
     permission_classes = [AllowAny]
+
+    def _generate_session(self, username):
+        try:
+            user = User.objects.get(username=username)
+            if not user.is_sso:
+                return "Not an SSO User", False
+            try:
+                token = Token.objects.get(user=user)
+                token.delete()
+            except Token.DoesNotExist:
+                token = Token.objects.create(user_id=user.id)
+            user_data = {
+                "id": user.id,
+                "name": user.get_full_name(),
+                "username": user.username,
+                "isSSOUser": user.is_sso,
+                "SSOId": user.sso_id
+            }
+            return {"token": token, user: user_data}, True
+        except User.DoesNotExist:
+            return "User does not exist", False
+        except Exception as ex:
+            return f"Unexpected Error: {str(ex)}", False
 
     def _generate_code_challenge(self, method):
         os_generated_rand_str = os.urandom(40)
@@ -161,6 +217,19 @@ class SSOLoginViewSet(ViewSet):
                 "code_verifier": code_verifier,
                 "tenant_id": tenant_id
             }
-            return Response({"success": True, "data": response_data}, status=200)
+            return Response({"success": True, "data": response_data, "message": "Authorize endpoint generated"}, status=200)
         except Exception as e:
-            return Response({"success": False, "data": str(e)}, status=500)
+            return Response({"success": False, "data": None, "message": f"Unexpected Error: {str(e)}"}, status=500)
+
+    def generate_token(self, request):
+        try:
+            body = request.data
+            id_token = body.get('idToken')
+            decoded_id_token = jwt.decode(id_token)
+            user_session, error = self._generate_session(username=decoded_id_token.get("data"))
+            if error:
+                return Response({"success": False, "data": None, "message": user_session}, status=500)
+            return Response({"success": True, "data": user_session, "message": "User session generated"}, status=200)
+
+        except Exception as ex:
+            return Response({"success": False, "data": None, "message": f"Unexpected Error: {str(ex)}"}, status=500)

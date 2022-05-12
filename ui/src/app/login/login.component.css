@@ -1,0 +1,10 @@
+.help-text {
+  padding: 5px;
+  margin: 5px 0;
+  color: #FF3300AD;
+}
+
+.error-input{
+  border-color: #FF3300AD;
+  outline: none;
+}
