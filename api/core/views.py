@@ -3,6 +3,7 @@ import os
 
 from django.conf import settings
 from django.contrib.auth.hashers import make_password, check_password
+from django.template import loader
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -12,6 +13,7 @@ import urllib.parse
 import re
 import base64
 import jwt
+from django.core.mail import EmailMultiAlternatives
 
 from .models import User, Task
 from .serializers import UserSerializer, TaskSerializer
@@ -217,7 +219,8 @@ class SSOLoginViewSet(ViewSet):
                 "code_verifier": code_verifier,
                 "tenant_id": tenant_id
             }
-            return Response({"success": True, "data": response_data, "message": "Authorize endpoint generated"}, status=200)
+            return Response({"success": True, "data": response_data, "message": "Authorize endpoint generated"},
+                            status=200)
         except Exception as e:
             return Response({"success": False, "data": None, "message": f"Unexpected Error: {str(e)}"}, status=500)
 
@@ -233,3 +236,58 @@ class SSOLoginViewSet(ViewSet):
 
         except Exception as ex:
             return Response({"success": False, "data": None, "message": f"Unexpected Error: {str(ex)}"}, status=500)
+
+
+class EmailViewSet(ViewSet):
+    permission_classes = [AllowAny]
+
+    def send_email(self, request):
+        to = "bhavanichandra9@gmail.com"
+        subject = "Test Email"
+        settings_dir = os.path.dirname(__file__)
+        project_root = os.path.abspath(os.path.dirname(settings_dir))
+        html_template = os.path.join(project_root, 'static/email_templates/credentials-share-email.html')
+        html_message = loader.render_to_string(html_template, {
+            "domain": "https://google.com/",
+            "logo_url": "https://www.logolynx.com/images/logolynx/e3/e31181990fa18403f14bd4bce5fbdf8d.jpeg",
+            "client_logo": None,
+            "username": "testuser",
+            "email": "test-user@test.com",
+            "subject": subject,
+            "is_sso": True,
+            "password": None,
+            "idp": "BuyerIDM"
+        })
+
+        # {
+        #     "domain": "https://google.com/",
+        #     "logo_url": "https://www.logolynx.com/images/logolynx/e3/e31181990fa18403f14bd4bce5fbdf8d.jpeg",
+        #     "client_logo": "https://www.logolynx.com/images/logolynx/e3/e31181990fa18403f14bd4bce5fbdf8d.jpeg",
+        #     "username": "testuser",
+        #     "client": "Cisco",
+        #     "email": "test-user@test.com",
+        #     "subject": subject,
+        #     "is_sso": False,
+        #     "password": "H3ll0W0r1d",
+        # }
+
+        # Forgot Password Payload
+
+        # html_message = loader.render_to_string(html_template, {
+        #     "domain": "https://google.com/",
+        #     "logo_url": "https://www.logolynx.com/images/logolynx/e3/e31181990fa18403f14bd4bce5fbdf8d.jpeg",
+        #     "username": "testuser",
+        #     "email": "test-user@test.com",
+        #     "subject": subject,
+        #     "password": "Somepassword"
+        # })
+        from_email = "test@gmail.com"
+        text_content = 'Test email to check conditional template'
+
+        msg = EmailMultiAlternatives(subject, text_content, from_email, [to])
+        msg.attach_alternative(html_message, "text/html")
+        try:
+            msg.send()
+            return Response({"message": "Email Sent"}, status=200)
+        except Exception as ex:
+            return Response({"message": f"Error sending email: {str(ex)}"})

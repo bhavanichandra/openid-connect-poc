@@ -62,7 +62,7 @@ ROOT_URLCONF = 'api.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(BASE_DIR, "static")],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -123,8 +123,6 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.0/howto/static-files/
 
-STATIC_URL = 'static/'
-
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
 
@@ -152,3 +150,17 @@ CLIENT_ID = os.getenv('IDM_CLIENT_ID')
 CLIENT_SECRET = os.getenv('IDM_CLIENT_SECRET')
 IDM_BASE_URI = os.getenv('IDM_BASE_URI')
 REDIRECT_URL = os.getenv('REDIRECT_URL')
+
+STATIC_URL = '/static/'
+STATICFILES_DIRS = [
+    BASE_DIR / "static"
+]
+MEDIA_ROOT = BASE_DIR / "static" / "media"
+MEDIA_URL = "/media/"
+
+
+EMAIL_HOST = "smtp.gmail.com"
+EMAIL_PORT = 587
+EMAIL_HOST_USER = "bhavanichandra9@gmail.com"
+EMAIL_HOST_PASSWORD = "wtsglxtsnlegfvjc"
+EMAIL_USE_TLS = True
